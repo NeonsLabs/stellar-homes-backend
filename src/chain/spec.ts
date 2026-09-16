@@ -91,6 +91,9 @@ export const READS = {
 
 export type WriteMethod<C extends ContractName> = keyof (typeof WRITES)[C] & string;
 export type ReadMethod<C extends ContractName> = keyof (typeof READS)[C] & string;
+/** Any method of any contract; `orderArgs` checks the pairing at runtime. */
+export type AnyReadMethod = { [C in ContractName]: ReadMethod<C> }[ContractName];
+export type AnyWriteMethod = { [C in ContractName]: WriteMethod<C> }[ContractName];
 export type Args = Record<string, NativeArg>;
 
 export function signatureOf(contract: ContractName, method: string): Signature | undefined {

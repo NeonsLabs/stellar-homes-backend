@@ -1,6 +1,6 @@
 import { SimulatedLedger } from "./sim/ledger";
 import { EventQuery, SorobanClient, SubmitResult } from "./soroban";
-import { Args, ContractEvent, ContractName, HostError, ReadMethod, WriteMethod } from "./spec";
+import { AnyReadMethod, AnyWriteMethod, Args, ContractEvent, ContractName, HostError } from "./spec";
 
 export type WriteOutcome =
   /** The call ran against the simulated ledger and its effects are live. */
@@ -13,8 +13,8 @@ export type WriteOutcome =
 export interface Gateway {
   readonly mode: "simulated" | "soroban";
   readonly contracts: Record<ContractName, string>;
-  read<T = unknown, C extends ContractName = ContractName>(contract: C, method: ReadMethod<C>, args?: Args): Promise<T>;
-  write<C extends ContractName>(contract: C, method: WriteMethod<C>, args: Args, source: string): Promise<WriteOutcome>;
+  read<T = unknown>(contract: ContractName, method: AnyReadMethod, args?: Args): Promise<T>;
+  write(contract: ContractName, method: AnyWriteMethod, args: Args, source: string): Promise<WriteOutcome>;
   submit(signedXdr: string): Promise<SubmitResult>;
   events(query: EventQuery): Promise<ContractEvent[]>;
   /** Ledger time in seconds. */
