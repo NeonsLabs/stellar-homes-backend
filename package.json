@@ -6,7 +6,9 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "ts-node-dev --respawn --transpile-only src/index.ts"
+    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "test": "node --require ts-node/register/transpile-only --test test/*.test.ts",
+    "typecheck": "tsc --noEmit -p . && tsc --noEmit -p tsconfig.test.json"
   },
   "dependencies": {
     "@stellar/stellar-sdk": "^13.0.0",
@@ -20,6 +22,7 @@
     "@types/express": "^4.17.21",
     "@types/node": "^20.12.7",
     "@types/pg": "^8.11.5",
+    "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.4.5"
   }
