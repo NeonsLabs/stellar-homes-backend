@@ -1,6 +1,6 @@
 # 🏠 StellarHomes Backend
 
-> Backend service for the StellarHomes platform — a Stellar/Soroban-powered real estate ecosystem enabling diaspora communities to invest in, build, and manage property back home through transparent, milestone-gated smart contracts.
+> Backend service for the StellarHomes platform — diaspora mortgages for building back home, released against the building and settled by Soroban smart contracts on Stellar.
 
 [![Built on Stellar](https://img.shields.io/badge/Built%20on-Stellar-blue?style=flat-square&logo=stellar)](https://stellar.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.4-blue?style=flat-square&logo=typescript)](https://www.typescriptlang.org/)
@@ -10,15 +10,49 @@
 
 ## Overview
 
-StellarHomes bridges the gap between the African diaspora and real estate investment in their home countries. The backend orchestrates:
+The settlement layer lives in [`stellar-homes-contract`](../stellar-homes-contract): a **PropertyRegistry**, a **LendingPool** and a **MortgagePool**. This backend is the off-chain half of the platform, and it follows those contracts exactly:
 
-- **KYC/Identity verification** — Smile ID integration (mocked) for user onboarding
-- **Property registry** — Title submission, oracle-based verification, and valuation
-- **Mortgage pool** — Application, approval, milestone-gated disbursement, and repayment tracking
-- **Construction milestones** — Evidence submission and oracle verification for build progress
-- **Audit logging** — Platform-wide activity trail with filterable queries
+- **KYC/Identity verification** — Smile ID integration (mocked). Identity never reaches the ledger; borrowing and investing require an approved wallet.
+- **Property registry** — trustee registration, oracle title checks and valuations, and the five-stage build schedule (foundation, walls, roofing, finishing, handover).
+- **Lending pool** — investor deposits, withdrawals of uncommitted capital, and interest claims.
+- **Mortgages** — application, underwriting, milestone-gated disbursement to the trustee, repayment and default.
+- **Audit logging** — platform-wide activity trail with filterable queries.
 
-All financial flows are designed to settle on **Stellar** via **Soroban smart contracts** for escrow, tokenization, and pool management.
+The contract is the source of truth for what is owed. Method names, check order, error codes, events and integer arithmetic here are taken from the contracts, not re-invented.
+
+---
+
+## Two ledgers, one API
+
+| Mode | When | What a write does |
+|------|------|-------------------|
+| **simulated** | No contract ids configured | Runs against an in-memory port of the three contracts (`src/chain/sim/`) and returns the result and events immediately |
+| **soroban** | All three contract ids configured | Simulates the call against the deployed contract and returns an **unsigned transaction** for the acting wallet to sign, then `POST /api/tx/submit` |
+
+Reads work the same in both modes. Configuring only some of the contract ids is refused at startup, because the contracts are wired to each other once, at deploy.
+
+The backend never holds a signing key. On-chain, the wallet's signature is what authorizes a trustee, oracle, underwriter, borrower or investor. **The simulated ledger verifies no signatures**: it trusts the address named in the request, and uses `ADMIN_API_KEY` in place of the admin's signature. It is for local development and demos, and refuses to start with `NODE_ENV=production` unless `ALLOW_SIMULATED_LEDGER=true`.
+
+### Signing flow (soroban mode)
+
+```text
+POST /api/mortgages/apply   →  { mode: "soroban", transaction, networkPassphrase, source }
+wallet (Freighter etc.) signs `transaction` as `source`
+POST /api/tx/submit { transaction: <signed XDR> }  →  { hash, status, returnValue }
+```
+
+`/api/tx/submit` relays only transactions that invoke one of the three configured contracts.
+
+---
+
+## Conventions
+
+- **Amounts** are integers in the settlement asset's smallest unit (USDC has 7 decimals, so `10000000` is 1 USDC). Send them as decimal strings (numbers work while they are safe integers). They are always returned as strings, and so are ids and timestamps.
+- **Hashes** (title, survey, milestone evidence) are 32-byte digests as 64 hex characters, e.g. a SHA-256 of the document. The documents themselves stay off-chain.
+- **Rates** are annual, in basis points: `850` is 8.5%, which is the default. The cap is 3,000 (30%).
+- **Loan-to-value** is capped at 80% of the surveyor's valuation.
+- **Interest** is constant amortisation, charged monthly (every 30 days) on the balance actually drawn. Each instalment is the month's interest plus `principal / termMonths`. See the contract repo's `docs/INTEREST_AND_REPAYMENT.md`.
+- **Errors** from a contract come back as `{ error, code, contract, message }`, e.g. `{ "error": "ExceedsLtv", "code": 14, "contract": "mortgage" }`. Unknown records are 404, authorization failures 403, bad arguments 400, and state conflicts 409. A missing signature is `403 NotSigned`. On-chain the host reports only the code, so an error raised inside a cross-contract call is attributed to the contract that was invoked.
 
 ---
 
@@ -26,120 +60,143 @@ All financial flows are designed to settle on **Stellar** via **Soroban smart co
 
 | Layer | Technology |
 |-------|-----------|
-| Runtime | Node.js |
+| Runtime | Node.js ≥ 18 |
 | Language | TypeScript 5.4 |
 | Framework | Express 4.x |
-| Blockchain | Stellar SDK 13.x / Soroban |
-| Database | PostgreSQL (via `pg`) — currently using in-memory stores for rapid prototyping |
+| Blockchain | Stellar SDK 13.x / Soroban RPC |
+| Database | In-memory stores (KYC, audit log); contract state lives on-chain or in the simulated ledger |
 
 ---
 
 ## Getting Started
 
-### Prerequisites
-
-- **Node.js** ≥ 18
-- **npm** ≥ 9
-
-### Installation
-
 ```bash
 git clone https://github.com/NeonsLabs/stellar-homes-backend.git
 cd stellar-homes-backend
 npm install
-```
-
-### Environment Setup
-
-```bash
 cp .env.example .env
 ```
 
-Edit `.env` with your configuration:
+### Local development (simulated ledger)
+
+Leave the contract ids empty and set an admin key:
 
 ```env
-PORT=4000
-STELLAR_NETWORK=testnet
-STELLAR_RPC_URL=https://soroban-testnet.stellar.org
-
-# Deployed Soroban Contract Addresses
-PROPERTY_REGISTRY_CONTRACT_ID=
-MORTGAGE_POOL_CONTRACT_ID=
-BUILD_ESCROW_CONTRACT_ID=
-
-# Admin / Oracle configuration
-ADMIN_SECRET_KEY=S...
+ADMIN_API_KEY=choose-something
+ALLOW_TIME_TRAVEL=true
 ```
-
-### Running
 
 ```bash
-# Development (hot-reload)
 npm run dev
-
-# Production build
-npm run build
-npm start
 ```
 
-The server starts at `http://localhost:4000`.
+The admin address is printed at startup and is also registered as the underwriter, as `deploy.sh` does by default. Grant roles with the admin key:
+
+```bash
+curl -X POST localhost:4000/api/admin/roles -H 'x-admin-key: choose-something' \
+  -H 'content-type: application/json' \
+  -d '{"role":"trustee","address":"G...","authorized":true}'
+```
+
+### Against deployed contracts
+
+Deploy with `stellar-homes-contract/scripts/deploy.sh`, then:
+
+```env
+STELLAR_NETWORK=testnet
+PROPERTY_REGISTRY_CONTRACT_ID=<REGISTRY>
+LENDING_POOL_CONTRACT_ID=<LENDING>
+MORTGAGE_POOL_CONTRACT_ID=<MORTGAGE>
+ADMIN_ADDRESS=<admin or multisig account>
+```
+
+### Scripts
+
+```bash
+npm run dev         # hot-reload
+npm test            # simulated ledger vs the contract test suites, and the API end to end
+npm run typecheck
+npm run build && npm start
+```
 
 ---
 
 ## API Reference
 
+Write endpoints return `{ mode: "simulated", result, events, ... }` or `{ mode: "soroban", transaction, ... }`, as described above.
+
 ### Health & Platform
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/health` | Service health check with uptime and network info |
-| `GET` | `/stats` | Platform stats and deployed contract addresses |
+| `GET` | `/health` | Service health, network and ledger mode |
+| `GET` | `/stats` | Contract addresses and the rules read from the mortgage pool (LTV, rate cap, month length, grace) |
 
-### KYC / Identity
+### KYC / Identity & Roles
+
+| Method | Endpoint | Body / notes |
+|--------|----------|-------------|
+| `POST` | `/api/kyc/verify` | `address, name, documentNumber, documentType, role` (`Borrower`, `Investor`, `Trustee`, `Oracle`, `Underwriter`) |
+| `GET` | `/api/users/:address` | Profile plus the roles the contracts actually recognise |
+| `GET` | `/api/roles/:address` | `{ trustee, oracle, underwriter }` from the contracts |
+| `POST` | `/api/admin/roles` | Admin. `role` (`trustee`, `oracle`, `underwriter`), `address`, `authorized` |
+
+### Properties — PropertyRegistry
+
+| Method | Endpoint | Body / notes |
+|--------|----------|-------------|
+| `GET` | `/api/properties` | `offset`, `limit` |
+| `POST` | `/api/properties/submit` | `trustee, titleHash, surveyDocHash`. Registered trustee; creates the five stages |
+| `GET` | `/api/properties/:id` | Property, milestones, verified stage count, live mortgage id |
+| `GET` | `/api/properties/:id/milestones/:stage` | One stage |
+| `POST` | `/api/properties/:id/verify-title` | `oracle`. Never the property's trustee |
+| `POST` | `/api/properties/:id/valuation` | `oracle, usdcValue`. Needs a verified title |
+| `POST` | `/api/properties/:id/milestones/submit` | `trustee, stage, evidenceHash`. The property's own trustee; replaceable until signed off |
+| `POST` | `/api/properties/:id/milestones/verify` | `oracle, stage`. Needs evidence and the previous stage signed off |
+
+### Mortgages — MortgagePool
+
+| Method | Endpoint | Body / notes |
+|--------|----------|-------------|
+| `POST` | `/api/mortgages/apply` | `borrower, propertyId, principal, termMonths, rateBps?`. KYC required |
+| `GET` | `/api/mortgages` | `borrower`, `status`. **Simulated ledger only**: the contract has no listing getter, so on-chain listing needs an indexer |
+| `GET` | `/api/mortgages/:id` | Stored loan, `live` balance / amount due / payoff / defaultability, and tranche sizes |
+| `GET` | `/api/mortgages/:id/schedule` | Projected instalments using the contract's arithmetic |
+| `GET` | `/api/mortgages/:id/repayments` | From `repaid` events. On-chain, RPC keeps only recent events; `complete` says whether the list covers every payment |
+| `POST` | `/api/mortgages/:id/approve` | `underwriter`. Commits the whole facility against the pool |
+| `POST` | `/api/mortgages/:id/decline` | `underwriter`. Before approval only; frees the property |
+| `POST` | `/api/mortgages/:id/disburse` | `stage, caller?`. Anyone; pays the stage's tranche to the trustee. `caller` (the fee payer) is required on-chain |
+| `POST` | `/api/mortgages/:id/repay` | `borrower, amount`. At least the instalment due, or the full payoff; overpaying a payoff takes only what is owed |
+| `POST` | `/api/mortgages/:id/default` | `caller?`. Anyone, once an instalment is unpaid past the grace period |
+| `GET` | `/api/mortgages/pool/stats` | Pool totals, and loan counts by status in simulation |
+
+### Lending Pool — LendingPool
+
+| Method | Endpoint | Body / notes |
+|--------|----------|-------------|
+| `GET` | `/api/pool` | Capital, reserved, lent, interest, written off, shares, available |
+| `GET` | `/api/pool/investors/:address` | Position and claimable interest |
+| `POST` | `/api/pool/deposit` | `investor, amount`. KYC required |
+| `POST` | `/api/pool/withdraw` | `investor, amount`. Only uncommitted capital |
+| `POST` | `/api/pool/claim` | `investor` |
+
+### Chain
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/api/kyc/verify` | Submit KYC verification (Smile ID mock) |
-| `GET` | `/api/users/:address` | Get user profile by Stellar address |
-
-### Properties
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/api/properties/submit` | Submit a new property (Trustee) |
-| `GET` | `/api/properties/:id` | Get property details |
-| `POST` | `/api/properties/:id/verify-title` | Verify title via Land Registry Oracle |
-| `POST` | `/api/properties/:id/valuation` | Set property valuation (Surveyor/Oracle) |
-
-### Milestones
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/api/properties/:id/milestones/submit` | Submit milestone evidence (Builder/Trustee) |
-| `POST` | `/api/properties/:id/milestones/verify` | Verify milestone (Oracle) |
-
-### Mortgages
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/api/mortgages/apply` | Submit a mortgage application |
-| `GET` | `/api/mortgages/` | List mortgages (filter by `borrower`, `status`) |
-| `GET` | `/api/mortgages/:id` | Get mortgage details |
-| `POST` | `/api/mortgages/:id/approve` | Approve a mortgage application |
-| `POST` | `/api/mortgages/:id/disburse` | Disburse funds against a verified milestone |
-| `POST` | `/api/mortgages/:id/repay` | Record a repayment |
-| `GET` | `/api/mortgages/:id/repayments` | Get repayment history |
-| `GET` | `/api/mortgages/pool/stats` | Aggregate mortgage pool analytics |
+| `POST` | `/api/tx/submit` | `transaction` (signed XDR). Soroban mode only |
+| `GET` | `/api/events` | `contract` (`registry`, `lending`, `mortgage`), `name`, `startLedger`, `limit`. Named as in the contract repo's `docs/EVENTS.md` |
+| `POST` | `/api/dev/advance-time` | `seconds`. Simulated ledger with `ALLOW_TIME_TRAVEL=true` only |
 
 ### Audit Log
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/audit/` | Query audit log (filter by `type`, `actor`, `entityId`; supports `limit`/`offset`) |
-| `GET` | `/api/audit/entity/:entityId` | Activity log for a specific property/mortgage |
-| `GET` | `/api/audit/actor/:address` | Activity log for a specific user |
+| `GET` | `/api/audit/` | Filter by `type`, `actor`, `entityKind`, `entityId`; `limit`/`offset` |
+| `GET` | `/api/audit/entity/:kind/:id` | Activity for a `property`, `mortgage` or `investor` |
+| `GET` | `/api/audit/actor/:address` | Activity for a specific user |
 | `GET` | `/api/audit/summary` | Event count breakdown by type |
-| `POST` | `/api/audit/log` | Manually log an event |
+| `POST` | `/api/audit/log` | Admin. Manually log an event |
 
 ---
 
@@ -148,43 +205,33 @@ The server starts at `http://localhost:4000`.
 ```
 stellar-homes-backend/
 ├── src/
-│   ├── index.ts        # Express entry point, middleware, health endpoints
-│   ├── routes.ts       # Core API — KYC, properties, milestones
-│   ├── mortgage.ts     # Mortgage lifecycle — apply, approve, disburse, repay
-│   └── audit.ts        # Platform-wide activity audit log
-├── .env.example        # Environment variable template
-├── tsconfig.json       # TypeScript configuration
-└── package.json        # Dependencies and scripts
+│   ├── index.ts            # Entry point
+│   ├── app.ts              # Express app, health and stats
+│   ├── config.ts           # Environment and ledger mode
+│   ├── http.ts             # Input parsing and error mapping
+│   ├── kyc.ts              # KYC and role lookups
+│   ├── present.ts          # API shapes and the repayment schedule projection
+│   ├── audit.ts            # Platform-wide activity audit log
+│   ├── routes/             # properties, mortgages, pool, admin, chain
+│   └── chain/
+│       ├── spec.ts         # The contract interface: methods, events, errors
+│       ├── gateway.ts      # One interface over both ledgers
+│       ├── soroban.ts      # Soroban RPC: reads, unsigned transactions, relay, events
+│       └── sim/            # In-memory port of the three contracts
+└── test/                   # Port vs contract test suites; API end to end
 ```
 
 ---
 
-## Architecture
+## Keeping in step with the contracts
 
-```
-┌─────────────┐     ┌──────────────────┐     ┌─────────────────────┐
-│  Frontend    │────▶│  Express API     │────▶│  Soroban Contracts  │
-│  (Next.js)   │     │  (this repo)     │     │  (Stellar Testnet)  │
-└─────────────┘     └──────────────────┘     └─────────────────────┘
-                           │
-                    ┌──────┴──────┐
-                    │  In-Memory  │  ← will migrate to PostgreSQL
-                    │   Stores    │
-                    └─────────────┘
-```
+`src/chain/spec.ts` lists every contract function the backend calls, with its argument order and types, plus the contracts' events and error codes. `src/chain/sim/` ports the three `lib.rs` files method for method. When the contracts change:
 
-**Smart Contracts (Soroban):**
-- `PropertyRegistry` — On-chain title registration and tokenization
-- `MortgagePool` — Pooled lending with interest accrual
-- `BuildEscrow` — Milestone-gated fund release for construction
+1. Update `spec.ts` and the matching file under `sim/`.
+2. Mirror any new or changed contract test in `test/ledger.test.ts`.
+3. Run `npm test`.
 
----
-
-## Soroban Contract Integration
-
-The backend is designed to interact with three Soroban contracts deployed on Stellar. Contract IDs are configured via environment variables. The current implementation uses in-memory stores to mock contract state, making it easy to run locally without a blockchain dependency.
-
-To connect to live contracts, set the `*_CONTRACT_ID` variables in `.env` and the backend will route calls through the Stellar SDK.
+One contract behaviour worth knowing: `disburse` accepts only `Approved` or `Funded` loans, and the first repayment moves a loan to `Repaying`. On the current contracts, a borrower who starts repaying before every stage has been drawn cannot draw the remaining tranches. The simulation reproduces this, and a test pins it.
 
 ---
 
