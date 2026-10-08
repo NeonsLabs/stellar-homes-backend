@@ -11,10 +11,15 @@ export function requireRole(gateway: Gateway, expectedRole: Role) {
     }
 
     try {
-      if (expectedRole === "trustee" || expectedRole === "oracle") {
-        const hasRole = await gateway.read<boolean>("registry", "has_role", caller, expectedRole);
+      if (expectedRole === "trustee") {
+        const hasRole = await gateway.read<boolean>("registry", "is_trustee", { trustee: caller });
         if (!hasRole) {
-          return res.status(403).json({ error: "Forbidden", message: `Wallet lacks ${expectedRole} permissions` });
+          return res.status(403).json({ error: "Forbidden", message: "Wallet is not a registered trustee" });
+        }
+      } else if (expectedRole === "oracle") {
+        const hasRole = await gateway.read<boolean>("registry", "is_oracle", { oracle: caller });
+        if (!hasRole) {
+          return res.status(403).json({ error: "Forbidden", message: "Wallet is not a registered oracle" });
         }
       }
       (req as any).user = { address: caller, role: expectedRole };
