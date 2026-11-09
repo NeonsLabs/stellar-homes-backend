@@ -8,6 +8,8 @@ import { Config } from "./config";
 import { MILESTONE_COUNT } from "./chain/sim/registry";
 import { errorHandler, jsonReplacer, route } from "./http";
 import { createKycRouter } from "./kyc";
+import { rateLimiter } from "./middleware/rate-limit";
+import { createHealthRouter } from "./routes/health";
 import { createAdminRouter } from "./routes/admin";
 import { createChainRouter } from "./routes/chain";
 import { adminGuard } from "./routes/common";
@@ -28,14 +30,26 @@ export function createGateway(config: Config): Gateway {
   );
 }
 
-export function createApp(config: Config, gateway: Gateway = createGateway(config)) {
+export interface AppOptions {
+  /** Requests allowed per client address per minute. Defaults to RATE_LIMIT_PER_MINUTE, then 300. */
+  rateLimitPerMinute?: number;
+}
+
+export function createApp(config: Config, gateway: Gateway = createGateway(config), options: AppOptions = {}) {
   const app = express();
   app.set("json replacer", jsonReplacer);
+  // One proxy sits in front of the deployed service (Render). Without this,
+  // req.ip is the proxy's address and every visitor would share one rate limit.
+  app.set("trust proxy", 1);
   const requireAdmin = adminGuard(config, gateway);
+  const rateLimit = options.rateLimitPerMinute ?? (Number(process.env.RATE_LIMIT_PER_MINUTE) || 300);
 
   // Middleware
   app.use(cors());
   app.use(express.json());
+  // Probes are exempt so a platform health check can never be answered with a 429.
+  app.use(rateLimiter(rateLimit, 60_000, { skipPaths: ["/health", "/healthz", "/readyz"] }));
+  app.use(createHealthRouter(gateway));
 
   // Request logging middleware
   app.use((req, _res, next) => {
