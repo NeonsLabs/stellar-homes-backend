@@ -8,6 +8,30 @@
 
 ---
 
+## Live on testnet
+
+| | |
+|---|---|
+| API | https://stellar-homes-api.onrender.com ([`/health`](https://stellar-homes-api.onrender.com/health), [`/stats`](https://stellar-homes-api.onrender.com/stats)) |
+| Web app | https://stellar-homes-frontend-bice.vercel.app |
+| Contracts | [PropertyRegistry](https://stellar.expert/explorer/testnet/contract/CBOELYHK2KJTCMAUOSW25MF2UEVEQQ5WXSSAABVZBTBT6VZZF6RFTAIE), [LendingPool](https://stellar.expert/explorer/testnet/contract/CDKXXSKF42LNLK3PRBJM45VR32RUE5TXSCJ4FJF6CXKO4HMNV6QFLBWY), [MortgagePool](https://stellar.expert/explorer/testnet/contract/CARXKBI6TY3ON74W5LCVQFWC4ZLEZ45ZGRZIGBUHA5FEDRV2ZCTRFE2K) |
+| Proof of a full loan | [Ten testnet transactions, one per step](https://github.com/NeonsLabs/stellar-homes-contract/blob/main/deployments/testnet-smoke-run.md) |
+
+The deployed API runs in `soroban` mode against those contracts, using [`render.yaml`](render.yaml). Try it with no setup:
+
+```bash
+curl https://stellar-homes-api.onrender.com/api/properties/1
+curl https://stellar-homes-api.onrender.com/api/mortgages/1
+```
+
+What to know before you try it:
+
+- It runs on Render's free tier, which sleeps after about 15 minutes idle. The first request can take 30 to 60 seconds.
+- KYC records and the audit log are held in memory and reset when the service restarts. Contract state lives on chain and is not affected.
+- The contracts are unaudited and run on testnet only.
+
+---
+
 ## Overview
 
 The settlement layer lives in [`stellar-homes-contract`](../stellar-homes-contract): a **PropertyRegistry**, a **LendingPool** and a **MortgagePool**. This backend is the off-chain half of the platform, and it follows those contracts exactly:
