@@ -1,0 +1,32 @@
+# Render Blueprint for the StellarHomes API on Stellar testnet.
+# Render reads this when the repo is connected as a Blueprint.
+#
+# The API holds no signing key. It reads the deployed contracts over Soroban RPC
+# and returns unsigned transactions for the user's wallet to sign, so nothing
+# here is secret and every value below can live in the file.
+services:
+  - type: web
+    name: stellar-homes-api
+    runtime: node
+    plan: free
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NODE_ENV
+        value: production
+      - key: STELLAR_NETWORK
+        value: testnet
+      - key: STELLAR_RPC_URL
+        value: https://soroban-testnet.stellar.org
+      # From stellar-homes-contract/deployments/testnet.json.
+      - key: PROPERTY_REGISTRY_CONTRACT_ID
+        value: CBOELYHK2KJTCMAUOSW25MF2UEVEQQ5WXSSAABVZBTBT6VZZF6RFTAIE
+      - key: LENDING_POOL_CONTRACT_ID
+        value: CDKXXSKF42LNLK3PRBJM45VR32RUE5TXSCJ4FJF6CXKO4HMNV6QFLBWY
+      - key: MORTGAGE_POOL_CONTRACT_ID
+        value: CARXKBI6TY3ON74W5LCVQFWC4ZLEZ45ZGRZIGBUHA5FEDRV2ZCTRFE2K
+      - key: ADMIN_ADDRESS
+        value: GC7KHA3UKYMFBRGCGE6HZAD55N7C7LH7SSDWHHSL2YYVJC6TND22FNBY
