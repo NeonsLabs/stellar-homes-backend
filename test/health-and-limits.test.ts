@@ -66,6 +66,23 @@ test("/readyz returns 503 when the contracts cannot be read", async () => {
   }
 });
 
+test("repeated /readyz probes share one contract read", async () => {
+  const gateway = createGateway(config);
+  const real = gateway.read.bind(gateway);
+  let reads = 0;
+  gateway.read = (async (...args: Parameters<typeof real>) => {
+    reads++;
+    return real(...args);
+  }) as typeof gateway.read;
+  const app = await serve(gateway);
+  try {
+    for (let i = 0; i < 4; i++) assert.equal((await fetch(`${app.base}/readyz`)).status, 200);
+    assert.equal(reads, 1);
+  } finally {
+    app.close();
+  }
+});
+
 test("a client past its limit gets a 429 with Retry-After", async () => {
   const app = await serve(createGateway(config), 3);
   try {
