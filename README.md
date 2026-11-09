@@ -154,7 +154,11 @@ Write endpoints return `{ mode: "simulated", result, events, ... }` or `{ mode: 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/health` | Service health, network and ledger mode |
+| `GET` | `/healthz` | Liveness: the process is up |
+| `GET` | `/readyz` | Readiness: reads the mortgage pool through the gateway. `200` when the contracts are reachable, `503` with a reason when they are not |
 | `GET` | `/stats` | Contract addresses and the rules read from the mortgage pool (LTV, rate cap, month length, grace) |
+
+Each client address is limited to 300 requests a minute (`RATE_LIMIT_PER_MINUTE` to change it) and gets `429` with `Retry-After` beyond that. The health endpoints are exempt. Counts are kept in memory, which suits one instance.
 
 ### KYC / Identity & Roles
 
